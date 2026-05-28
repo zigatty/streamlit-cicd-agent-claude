@@ -1,0 +1,64 @@
+# ---- Version control --------------------------------------------------------
+.git
+.gitignore
+.gitattributes
+
+# ---- Python artifacts -------------------------------------------------------
+__pycache__
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info
+dist/
+build/
+.eggs/
+
+# ---- Virtual environments ---------------------------------------------------
+.venv
+venv
+env
+ENV
+
+# ---- Secrets — NEVER ship these in the image --------------------------------
+.env
+.env.*
+!.env.example
+sa-key.json
+**/secrets/**
+*credentials*
+
+# ---- Test + coverage output -------------------------------------------------
+.pytest_cache
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache
+.ruff_cache
+
+# ---- CI config — not needed at runtime --------------------------------------
+bitbucket-pipelines.yml
+.github/
+.gitlab-ci.yml
+
+# ---- Docs and local tooling -------------------------------------------------
+*.md
+docs/
+
+# ---- Project-specific large/non-runtime directories ------------------------
+audio/
+bottle_imgs/
+swipe_files/
+examples/
+faqs/
+personas/
+positioning/
+prompts/
+assets/
+brand/
+
+# ---- Local outputs and generated files --------------------------------------
+*.png
+*.jpg
+*.jpeg
+*.csv
+*.xlsx

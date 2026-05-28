@@ -1,0 +1,253 @@
+# =============================================================================
+# Bitbucket Pipelines — Streamlit Dashboard → Google Cloud Run
+# Project  : my-streamlit-app-123
+# Region   : us-central1
+# Image    : streamlit-dashboard
+# Prod svc : streamlit-dashboard-prod
+# Stg svc  : streamlit-dashboard-staging
+# =============================================================================
+#
+# Only GCLOUD_SERVICE_KEY must be set as a Bitbucket Repository Variable
+# (Settings → Pipelines → Repository variables) and marked Secured.
+# All other values are hardcoded below — change them to match your GCP project.
+#
+# Generate the key:
+#   gcloud iam service-accounts keys create sa-key.json \
+#     --iam-account=bitbucket-cicd@my-streamlit-app-123.iam.gserviceaccount.com
+#   base64 -w 0 sa-key.json   # Linux
+#   base64 -i sa-key.json     # macOS
+# =============================================================================
+
+image: python:3.12-slim
+
+definitions:
+  caches:
+    pip: ~/.cache/pip
+
+  steps:
+
+    # ---- 1. Install ---------------------------------------------------------
+    - step: &install-and-cache
+        name: "Install dependencies"
+        caches:
+          - pip
+        script:
+          - pip install --upgrade pip --quiet
+          - pip install -r requirements.txt --quiet
+        artifacts:
+          - requirements.txt
+
+    # ---- 2. Lint ------------------------------------------------------------
+    - step: &lint
+        name: "Lint (Ruff)"
+        caches:
+          - pip
+        script:
+          - pip install ruff --quiet
+          - ruff check . --select=E,F,W --output-format=github
+
+    # ---- 3. Test ------------------------------------------------------------
+    - step: &test
+        name: "Test (pytest + coverage)"
+        caches:
+          - pip
+        script:
+          - pip install pytest pytest-cov --quiet
+          - pip install -r requirements.txt --quiet
+          - pytest tests/ --cov=. --cov-report=xml --cov-fail-under=60 -v
+        artifacts:
+          - coverage.xml
+
+    # ---- 4. Build & push ----------------------------------------------------
+    - step: &build-and-push
+        name: "Build & push Docker image"
+        image: google/cloud-sdk:slim
+        services:
+          - docker
+        caches:
+          - docker
+        script:
+          # Auth
+          - echo $GCLOUD_SERVICE_KEY | base64 -d > /tmp/sa-key.json
+          - gcloud auth activate-service-account --key-file=/tmp/sa-key.json
+          - gcloud config set project my-streamlit-app-123
+          - gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+          # Image refs
+          - export REGISTRY="us-central1-docker.pkg.dev/my-streamlit-app-123/streamlit-dashboard"
+          - export IMAGE_SHA="${REGISTRY}/streamlit-dashboard:${BITBUCKET_COMMIT:0:8}"
+          - export IMAGE_BRANCH="${REGISTRY}/streamlit-dashboard:${BITBUCKET_BRANCH//\//-}"
+
+          # Ensure Artifact Registry repo exists
+          - |
+            gcloud artifacts repositories describe streamlit-dashboard \
+              --location=us-central1 --project=my-streamlit-app-123 2>/dev/null \
+            || gcloud artifacts repositories create streamlit-dashboard \
+              --repository-format=docker \
+              --location=us-central1 \
+              --project=my-streamlit-app-123 \
+              --description="Streamlit dashboard Docker images"
+
+          # Build (with layer cache from previous branch image)
+          - |
+            docker build \
+              --cache-from "${IMAGE_BRANCH}" \
+              --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --build-arg VCS_REF="${BITBUCKET_COMMIT:0:8}" \
+              -t "${IMAGE_SHA}" \
+              -t "${IMAGE_BRANCH}" \
+              . || docker build \
+                --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                --build-arg VCS_REF="${BITBUCKET_COMMIT:0:8}" \
+                -t "${IMAGE_SHA}" \
+                -t "${IMAGE_BRANCH}" \
+                .
+
+          # Push
+          - docker push "${IMAGE_SHA}"
+          - docker push "${IMAGE_BRANCH}"
+          - echo "IMAGE_SHA=${IMAGE_SHA}" > image.env
+        artifacts:
+          - image.env
+
+    # ---- 5a. Deploy production ----------------------------------------------
+    - step: &deploy-production
+        name: "Deploy to Cloud Run (production)"
+        image: google/cloud-sdk:slim
+        deployment: production
+        trigger: automatic
+        script:
+          - source image.env
+          - echo $GCLOUD_SERVICE_KEY | base64 -d > /tmp/sa-key.json
+          - gcloud auth activate-service-account --key-file=/tmp/sa-key.json
+          - gcloud config set project my-streamlit-app-123
+          - |
+            gcloud run deploy streamlit-dashboard-prod \
+              --image="${IMAGE_SHA}" \
+              --region=us-central1 \
+              --platform=managed \
+              --allow-unauthenticated \
+              --port=8501 \
+              --min-instances=1 \
+              --max-instances=10 \
+              --memory=1Gi \
+              --cpu=1 \
+              --concurrency=80 \
+              --timeout=60s \
+              --set-env-vars="ENV=production,APP_NAME=streamlit-dashboard" \
+              --quiet
+          - |
+            gcloud run services describe streamlit-dashboard-prod \
+              --region=us-central1 \
+              --format="value(status.url)"
+
+    # ---- 5b. Deploy staging -------------------------------------------------
+    - step: &deploy-staging
+        name: "Deploy to Cloud Run (staging)"
+        image: google/cloud-sdk:slim
+        deployment: staging
+        trigger: automatic
+        script:
+          - source image.env
+          - echo $GCLOUD_SERVICE_KEY | base64 -d > /tmp/sa-key.json
+          - gcloud auth activate-service-account --key-file=/tmp/sa-key.json
+          - gcloud config set project my-streamlit-app-123
+          - |
+            gcloud run deploy streamlit-dashboard-staging \
+              --image="${IMAGE_SHA}" \
+              --region=us-central1 \
+              --platform=managed \
+              --allow-unauthenticated \
+              --port=8501 \
+              --min-instances=0 \
+              --max-instances=3 \
+              --memory=1Gi \
+              --cpu=1 \
+              --concurrency=80 \
+              --timeout=60s \
+              --set-env-vars="ENV=staging,APP_NAME=streamlit-dashboard" \
+              --quiet
+          - |
+            gcloud run services describe streamlit-dashboard-staging \
+              --region=us-central1 \
+              --format="value(status.url)"
+
+# =============================================================================
+# PIPELINES
+# =============================================================================
+
+pipelines:
+
+  # Any branch not matched below: lint + test only, no deploy
+  default:
+    - step:
+        <<: *install-and-cache
+    - step:
+        <<: *lint
+    - step:
+        <<: *test
+
+  branches:
+
+    # staging branch → lint + test + build + deploy to staging Cloud Run
+    staging:
+      - step:
+          <<: *install-and-cache
+      - step:
+          <<: *lint
+      - step:
+          <<: *test
+      - step:
+          <<: *build-and-push
+          name: "Build & push Docker image (staging)"
+      - step:
+          <<: *deploy-staging
+
+    # main branch → lint + test + build + deploy to production Cloud Run
+    main:
+      - step:
+          <<: *install-and-cache
+      - step:
+          <<: *lint
+      - step:
+          <<: *test
+      - step:
+          <<: *build-and-push
+          name: "Build & push Docker image (production)"
+      - step:
+          <<: *deploy-production
+
+  # Every PR: lint + test, no build or deploy
+  pull-requests:
+    '**':
+      - step:
+          <<: *install-and-cache
+      - step:
+          <<: *lint
+      - step:
+          <<: *test
+
+  # Manual pipelines (triggered from Bitbucket UI)
+  custom:
+
+    # Rollback: re-deploy any past commit SHA to production
+    rollback-production:
+      - variables:
+          - name: ROLLBACK_SHA
+            description: "8-char commit SHA to roll back to (e.g. a1b2c3d4)"
+      - step:
+          name: "Rollback production to $ROLLBACK_SHA"
+          image: google/cloud-sdk:slim
+          script:
+            - echo $GCLOUD_SERVICE_KEY | base64 -d > /tmp/sa-key.json
+            - gcloud auth activate-service-account --key-file=/tmp/sa-key.json
+            - gcloud config set project my-streamlit-app-123
+            - export ROLLBACK_IMAGE="us-central1-docker.pkg.dev/my-streamlit-app-123/streamlit-dashboard/streamlit-dashboard:${ROLLBACK_SHA}"
+            - echo "==> Rolling back to ${ROLLBACK_IMAGE}"
+            - |
+              gcloud run deploy streamlit-dashboard-prod \
+                --image="${ROLLBACK_IMAGE}" \
+                --region=us-central1 \
+                --platform=managed \
+                --quiet
+            - echo "==> Rollback complete."

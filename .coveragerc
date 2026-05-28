@@ -1,0 +1,14 @@
+[run]
+# Only measure coverage for files that have tests written against them.
+# Streamlit/matplotlib app files require integration tests — excluded here.
+source = tests
+
+[report]
+omit =
+    streamlit_app.py
+    enterprise_dashboard.py
+    generate_vo.py
+    run_pipeline.py
+    cicd_agent.py
+    */site-packages/*
+fail_under = 80

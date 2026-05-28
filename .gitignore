@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+sa-key.json
+**/secrets/
+*credentials*
+
+# Test + coverage output
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Pipeline runner artifacts
+image.env
+
+# Generated images
+*.png
+*.jpg
+enterprise_dashboard_2024.png
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp

@@ -1,0 +1,11 @@
+line-length = 120
+
+[lint]
+select = ["E", "F", "W"]
+# E501: line length — Streamlit/Plotly chains run long
+# E7xx: inline statements — pre-existing style in enterprise_dashboard.py
+ignore = ["E501", "E701", "E702"]
+
+[lint.per-file-ignores]
+# Legacy dashboard file — enforce only import/name errors
+"enterprise_dashboard.py" = ["E", "W"]
